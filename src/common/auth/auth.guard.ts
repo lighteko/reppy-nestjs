@@ -4,6 +4,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { AuthenticatedRequest } from '@/common/auth/auth-request';
 import { TokensService } from '@/common/auth/tokens.service';
 
 @Injectable()
@@ -11,8 +12,8 @@ export class AuthGuard implements CanActivate {
   constructor(private readonly tokens: TokensService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<any>();
-    const authHeader = req.headers?.authorization as string | undefined;
+    const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const authHeader = req.headers?.authorization;
     let token: string | undefined;
 
     if (authHeader) {

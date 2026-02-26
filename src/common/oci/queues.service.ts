@@ -15,7 +15,7 @@ export interface QueueRef {
   name?: string;
 }
 
-export interface PutOpts extends QueueRef {}
+export type PutOpts = QueueRef;
 
 export interface GetOpts extends QueueRef {
   limit?: number;
@@ -23,7 +23,16 @@ export interface GetOpts extends QueueRef {
   visibilityInSeconds?: number;
 }
 
-export interface DeleteOpts extends QueueRef {}
+export type DeleteOpts = QueueRef;
+
+function hasErrorMessage(value: unknown): value is { message: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'message' in value &&
+    typeof value.message === 'string'
+  );
+}
 
 @Injectable()
 export class OciQueuesService implements OnModuleInit {
@@ -98,16 +107,17 @@ export class OciQueuesService implements OnModuleInit {
     fn: () => Promise<T>,
     label: string,
   ): Promise<T> {
-    let lastErr: any;
+    let lastErr: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         return await fn();
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastErr = err;
         const isLast = attempt === this.maxRetries;
+        const msg = hasErrorMessage(err) ? err.message : String(err);
         this.logger.error(
           `[OCIQueues] ${label} failed (attempt ${attempt + 1}/${this.maxRetries + 1}): ${String(
-            err?.message ?? err,
+            msg,
           )}`,
         );
         if (isLast) break;
@@ -132,7 +142,7 @@ export class OciQueuesService implements OnModuleInit {
       throw new Error('putMessages: meta.queueId is required');
     const arr = Array.isArray(messages) ? messages : [messages];
 
-    const putMessagesDetails: any = {
+    const putMessagesDetails: queue.models.PutMessagesDetails = {
       messages: arr.map((m) => ({ content: m.content })),
       ...(meta.channel ? { channel: meta.channel } : {}),
     };
@@ -141,10 +151,11 @@ export class OciQueuesService implements OnModuleInit {
 
     return this.withRetries(
       async () => {
-        const resp = await client.putMessages({
+        const req: queue.requests.PutMessagesRequest = {
           queueId: meta.queueId,
           putMessagesDetails,
-        } as any);
+        };
+        const resp = await client.putMessages(req);
         this.logger.log(
           `[OCIQueues] putMessages ok ${this.metaLabel(meta)} count=${arr.length}`,
         );
@@ -165,13 +176,14 @@ export class OciQueuesService implements OnModuleInit {
 
     return this.withRetries(
       async () => {
-        const resp = await client.getMessages({
+        const req: queue.requests.GetMessagesRequest = {
           queueId: meta.queueId,
           limit,
           timeoutInSeconds,
           visibilityInSeconds,
           ...(meta.channel ? { channel: meta.channel } : {}),
-        } as any);
+        };
+        const resp = await client.getMessages(req);
         this.logger.log(
           `[OCIQueues] getMessages ok ${this.metaLabel(meta)} limit=${limit} timeout=${timeoutInSeconds}s visibility=${visibilityInSeconds}s`,
         );
@@ -186,7 +198,7 @@ export class OciQueuesService implements OnModuleInit {
       throw new Error('deleteMessages: meta.queueId is required');
     const arr = Array.isArray(receipts) ? receipts : [receipts];
 
-    const deleteMessagesDetails: any = {
+    const deleteMessagesDetails: queue.models.DeleteMessagesDetails = {
       entries: arr.map((r) => ({ receipt: r })),
       ...(meta.channel ? { channel: meta.channel } : {}),
     };
@@ -195,10 +207,11 @@ export class OciQueuesService implements OnModuleInit {
 
     return this.withRetries(
       async () => {
-        const resp = await client.deleteMessages({
+        const req: queue.requests.DeleteMessagesRequest = {
           queueId: meta.queueId,
           deleteMessagesDetails,
-        } as any);
+        };
+        const resp = await client.deleteMessages(req);
         this.logger.log(
           `[OCIQueues] deleteMessages ok ${this.metaLabel(meta)} count=${arr.length}`,
         );

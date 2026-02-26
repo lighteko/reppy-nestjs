@@ -8,6 +8,69 @@ import { Readable } from 'stream';
 
 type AuthMode = 'instance_principal' | 'config_file';
 
+interface JsonWithHtml {
+  html: unknown;
+}
+
+interface ReaderResult {
+  done: boolean;
+  value?: Uint8Array;
+}
+
+interface ReaderLike {
+  read: () => Promise<ReaderResult>;
+}
+
+interface ReadableStreamLike {
+  getReader: () => ReaderLike;
+}
+
+function hasErrorMessage(value: unknown): value is { message: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'message' in value &&
+    typeof value.message === 'string'
+  );
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    typeof value === 'object' && value !== null && Symbol.asyncIterator in value
+  );
+}
+
+function hasGetReader(value: unknown): value is ReadableStreamLike {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'getReader' in value &&
+    typeof value.getReader === 'function'
+  );
+}
+
+function hasHtmlField(value: unknown): value is JsonWithHtml {
+  return typeof value === 'object' && value !== null && 'html' in value;
+}
+
+function toSafeText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('utf-8');
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null ||
+    value === undefined
+  ) {
+    return String(value ?? '');
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+}
+
 @Injectable()
 export class OciObjectStorageService implements OnModuleInit {
   private static client: objectstorage.ObjectStorageClient | null = null;
@@ -78,16 +141,17 @@ export class OciObjectStorageService implements OnModuleInit {
     fn: () => Promise<T>,
     label: string,
   ): Promise<T> {
-    let lastErr: any;
+    let lastErr: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         return await fn();
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastErr = err;
         const isLast = attempt === this.maxRetries;
+        const msg = hasErrorMessage(err) ? err.message : String(err);
         this.logger.error(
           `[OCIObjectStorage] ${label} failed (attempt ${attempt + 1}/${this.maxRetries + 1}): ${String(
-            err?.message ?? err,
+            msg,
           )}`,
         );
         if (isLast) break;
@@ -175,17 +239,25 @@ export class OciObjectStorageService implements OnModuleInit {
     );
   }
 
-  private async readStreamToBuffer(value: any): Promise<Buffer> {
-    if (value && typeof value[Symbol.asyncIterator] === 'function') {
+  private async readStreamToBuffer(value: unknown): Promise<Buffer> {
+    if (isAsyncIterable(value)) {
       const chunks: Buffer[] = [];
-      for await (const chunk of value as AsyncIterable<any>) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      for await (const chunk of value) {
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk);
+          continue;
+        }
+        if (chunk instanceof Uint8Array) {
+          chunks.push(Buffer.from(chunk));
+          continue;
+        }
+        chunks.push(Buffer.from(toSafeText(chunk), 'utf-8'));
       }
       return Buffer.concat(chunks);
     }
 
-    if (value && typeof (value as any).getReader === 'function') {
-      const reader = (value as any).getReader();
+    if (hasGetReader(value)) {
+      const reader = value.getReader();
       const chunks: Uint8Array[] = [];
       while (true) {
         const { done, value: v } = await reader.read();
@@ -202,7 +274,7 @@ export class OciObjectStorageService implements OnModuleInit {
       return Buffer.from(merged);
     }
 
-    return Buffer.from(String(value ?? ''), 'utf-8');
+    return Buffer.from(toSafeText(value), 'utf-8');
   }
 
   async getObject(
@@ -232,9 +304,9 @@ export class OciObjectStorageService implements OnModuleInit {
     const trimmed = bodyString.trim();
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
       try {
-        const jsonObj = JSON.parse(trimmed);
-        if (jsonObj && typeof jsonObj === 'object' && 'html' in jsonObj) {
-          const html = (jsonObj as any).html;
+        const jsonObj: unknown = JSON.parse(trimmed);
+        if (hasHtmlField(jsonObj)) {
+          const html = jsonObj.html;
           return typeof html === 'string' ? html : JSON.stringify(html);
         }
         return JSON.stringify(jsonObj);

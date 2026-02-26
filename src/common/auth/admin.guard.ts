@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -15,7 +16,7 @@ export class AdminGuard implements CanActivate {
   }
 
   canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<any>();
+    const req = context.switchToHttp().getRequest<Request>();
     const adminHeader = req.headers?.admin as string | undefined;
     if (!adminHeader || adminHeader !== this.adminPassword) {
       throw new UnauthorizedException('Unauthorized');

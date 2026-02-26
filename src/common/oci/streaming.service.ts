@@ -18,6 +18,29 @@ export interface ConsumeOpts extends StreamRef {
   cursorType?: 'LATEST' | 'TRIM_HORIZON' | 'AT_CURSOR';
 }
 
+interface CursorResponseShape {
+  cursor?: { value?: string };
+  value?: string;
+  data?: { value?: string };
+}
+
+interface MessagesResponseShape {
+  messages?: unknown[];
+  getMessages?: { messages?: unknown[] };
+  data?: { messages?: unknown[]; opcNextCursor?: string };
+  opcNextCursor?: string;
+  nextCursor?: string;
+}
+
+function hasErrorMessage(value: unknown): value is { message: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'message' in value &&
+    typeof value.message === 'string'
+  );
+}
+
 @Injectable()
 export class OciStreamingService implements OnModuleInit {
   private static client: streaming.StreamClient | null = null;
@@ -83,16 +106,17 @@ export class OciStreamingService implements OnModuleInit {
     fn: () => Promise<T>,
     label: string,
   ): Promise<T> {
-    let lastErr: any;
+    let lastErr: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         return await fn();
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastErr = err;
         const isLast = attempt === this.maxRetries;
+        const msg = hasErrorMessage(err) ? err.message : String(err);
         this.logger.error(
           `[OCIStreaming] ${label} failed (attempt ${attempt + 1}/${this.maxRetries + 1}): ${String(
-            err?.message ?? err,
+            msg,
           )}`,
         );
         if (isLast) break;
@@ -116,14 +140,16 @@ export class OciStreamingService implements OnModuleInit {
 
     return this.withRetries(
       async () => {
-        const resp: any = await client.createCursor({
+        const req: streaming.requests.CreateCursorRequest = {
           streamId: meta.streamId,
           createCursorDetails: {
             type: cursorType,
             cursor: meta.cursor,
             partition: meta.partition,
           },
-        } as any);
+        };
+        const raw = (await client.createCursor(req)) as unknown;
+        const resp = raw as CursorResponseShape;
 
         const cursor = resp?.cursor?.value ?? resp?.value ?? resp?.data?.value;
         return cursor as string;
@@ -140,11 +166,13 @@ export class OciStreamingService implements OnModuleInit {
 
     return this.withRetries(
       async () => {
-        const resp: any = await client.getMessages({
+        const req: streaming.requests.GetMessagesRequest = {
           streamId: meta.streamId,
           cursor: meta.cursor,
           limit,
-        } as any);
+        };
+        const raw = (await client.getMessages(req)) as unknown;
+        const resp = raw as MessagesResponseShape;
 
         const messages =
           resp?.messages ??
@@ -155,7 +183,7 @@ export class OciStreamingService implements OnModuleInit {
           resp?.opcNextCursor ?? resp?.nextCursor ?? resp?.data?.opcNextCursor;
 
         return { messages, nextCursor } as {
-          messages: any[];
+          messages: unknown[];
           nextCursor?: string;
         };
       },
@@ -166,7 +194,7 @@ export class OciStreamingService implements OnModuleInit {
   async consume(
     opts: ConsumeOpts,
     onMessages: (
-      msgs: any[],
+      msgs: unknown[],
       ctx: { nextCursor?: string; commit: () => Promise<void> },
     ) => Promise<void>,
   ) {
@@ -189,8 +217,9 @@ export class OciStreamingService implements OnModuleInit {
 
       await onMessages(messages, {
         nextCursor,
-        commit: async () => {
+        commit: () => {
           if (nextCursor) cursor = nextCursor;
+          return Promise.resolve();
         },
       });
 
