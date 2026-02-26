@@ -13,23 +13,12 @@ export interface StreamRef {
 export interface ConsumeOpts extends StreamRef {
   partition?: string;
   limit?: number;
+  pollIntervalMs?: number;
   timeoutMs?: number;
   cursor?: string;
-  cursorType?: 'LATEST' | 'TRIM_HORIZON' | 'AT_CURSOR';
-}
-
-interface CursorResponseShape {
-  cursor?: { value?: string };
-  value?: string;
-  data?: { value?: string };
-}
-
-interface MessagesResponseShape {
-  messages?: unknown[];
-  getMessages?: { messages?: unknown[] };
-  data?: { messages?: unknown[]; opcNextCursor?: string };
-  opcNextCursor?: string;
-  nextCursor?: string;
+  cursorType?: streaming.models.CreateCursorDetails.Type;
+  offset?: number;
+  time?: Date;
 }
 
 function hasErrorMessage(value: unknown): value is { message: string } {
@@ -45,6 +34,7 @@ function hasErrorMessage(value: unknown): value is { message: string } {
 export class OciStreamingService implements OnModuleInit {
   private static client: streaming.StreamClient | null = null;
   private readonly logger = new Logger(OciStreamingService.name);
+  private stopRequested = false;
   private readonly authMode: AuthMode;
   private readonly region: string;
   private readonly endpoint: string;
@@ -134,9 +124,30 @@ export class OciStreamingService implements OnModuleInit {
 
   async createCursor(meta: ConsumeOpts) {
     const client = this.getClient();
-    const cursorType = meta.cursor
-      ? 'AT_CURSOR'
-      : (meta.cursorType ?? 'LATEST');
+    const cursorType =
+      meta.cursorType ?? streaming.models.CreateCursorDetails.Type.Latest;
+
+    if (!meta.partition) {
+      throw new Error('createCursor: partition is required');
+    }
+    const partition = meta.partition;
+
+    if (
+      (cursorType === streaming.models.CreateCursorDetails.Type.AtOffset ||
+        cursorType === streaming.models.CreateCursorDetails.Type.AfterOffset) &&
+      meta.offset === undefined
+    ) {
+      throw new Error(
+        'createCursor: offset is required for offset cursor types',
+      );
+    }
+
+    if (
+      cursorType === streaming.models.CreateCursorDetails.Type.AtTime &&
+      !meta.time
+    ) {
+      throw new Error('createCursor: time is required for AT_TIME cursor type');
+    }
 
     return this.withRetries(
       async () => {
@@ -144,23 +155,23 @@ export class OciStreamingService implements OnModuleInit {
           streamId: meta.streamId,
           createCursorDetails: {
             type: cursorType,
-            cursor: meta.cursor,
-            partition: meta.partition,
+            partition,
+            ...(meta.offset !== undefined ? { offset: meta.offset } : {}),
+            ...(meta.time ? { time: meta.time } : {}),
           },
         };
-        const raw = (await client.createCursor(req)) as unknown;
-        const resp = raw as CursorResponseShape;
+        const resp = await client.createCursor(req);
 
-        const cursor = resp?.cursor?.value ?? resp?.value ?? resp?.data?.value;
-        return cursor as string;
+        if (!resp.cursor?.value) {
+          throw new Error('createCursor: missing cursor value');
+        }
+        return resp.cursor.value;
       },
       `createCursor(${this.metaLabel(meta)})`,
     );
   }
 
-  async getRecords(
-    meta: StreamRef & { cursor: string; limit?: number; timeoutMs?: number },
-  ) {
+  async getRecords(meta: StreamRef & { cursor: string; limit?: number }) {
     const client = this.getClient();
     const limit = meta.limit ?? 100;
 
@@ -171,19 +182,12 @@ export class OciStreamingService implements OnModuleInit {
           cursor: meta.cursor,
           limit,
         };
-        const raw = (await client.getMessages(req)) as unknown;
-        const resp = raw as MessagesResponseShape;
-
-        const messages =
-          resp?.messages ??
-          resp?.getMessages?.messages ??
-          resp?.data?.messages ??
-          [];
-        const nextCursor =
-          resp?.opcNextCursor ?? resp?.nextCursor ?? resp?.data?.opcNextCursor;
+        const resp = await client.getMessages(req);
+        const messages = resp.items ?? [];
+        const nextCursor = resp.opcNextCursor;
 
         return { messages, nextCursor } as {
-          messages: unknown[];
+          messages: streaming.models.Message[];
           nextCursor?: string;
         };
       },
@@ -194,14 +198,15 @@ export class OciStreamingService implements OnModuleInit {
   async consume(
     opts: ConsumeOpts,
     onMessages: (
-      msgs: unknown[],
+      msgs: streaming.models.Message[],
       ctx: { nextCursor?: string; commit: () => Promise<void> },
     ) => Promise<void>,
   ) {
     let cursor = opts.cursor ?? (await this.createCursor(opts));
     let nextCursor: string | undefined;
+    const pollIntervalMs = opts.pollIntervalMs ?? opts.timeoutMs ?? 100;
 
-    while (true) {
+    while (!this.stopRequested) {
       const { messages, nextCursor: nc } = await this.getRecords({
         ...opts,
         cursor,
@@ -210,7 +215,7 @@ export class OciStreamingService implements OnModuleInit {
       nextCursor = nc;
 
       if (!messages.length) {
-        await new Promise((r) => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
         cursor = nextCursor ?? cursor;
         continue;
       }
@@ -225,5 +230,7 @@ export class OciStreamingService implements OnModuleInit {
 
       if (nextCursor) cursor = nextCursor;
     }
+
+    throw new Error('consume loop stopped unexpectedly');
   }
 }
