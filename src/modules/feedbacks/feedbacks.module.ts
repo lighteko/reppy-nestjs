@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { FeedbacksController } from '@/modules/feedbacks/presentation/feedbacks.controller';
-import { FeedbacksUseCase } from '@/modules/feedbacks/application/feedbacks.usecase';
-import { FeedbacksRepository } from '@/modules/feedbacks/infrastructure/feedbacks.repository';
+import { FeedbacksController } from '@/modules/feedbacks/controller';
+import { FeedbacksUseCase } from '@/modules/feedbacks/usecases';
+import { FeedbacksRepository } from '@/modules/feedbacks/repository';
 
 @Module({
   controllers: [FeedbacksController],

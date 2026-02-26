@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { RoutinesController } from '@/modules/routines/presentation/routines.controller';
-import { RoutinesUseCase } from '@/modules/routines/application/routines.usecase';
-import { RoutinesRepository } from '@/modules/routines/infrastructure/routines.repository';
+import { RoutinesController } from '@/modules/routines/controller';
+import { RoutinesUseCase } from '@/modules/routines/usecases';
+import { RoutinesRepository } from '@/modules/routines/repository';
 
 @Module({
   controllers: [RoutinesController],

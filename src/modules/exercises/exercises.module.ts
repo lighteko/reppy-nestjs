@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ExercisesController } from '@/modules/exercises/presentation/exercises.controller';
-import { ExercisesUseCase } from '@/modules/exercises/application/exercises.usecase';
-import { ExercisesRepository } from '@/modules/exercises/infrastructure/exercises.repository';
+import { ExercisesController } from '@/modules/exercises/controller';
+import { ExercisesUseCase } from '@/modules/exercises/usecases';
+import { ExercisesRepository } from '@/modules/exercises/repository';
 
 @Module({
   controllers: [ExercisesController],

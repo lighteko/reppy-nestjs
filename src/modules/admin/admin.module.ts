@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { AdminController } from '@/modules/admin/presentation/admin.controller';
-import { AdminUseCase } from '@/modules/admin/application/admin.usecase';
-import { AdminRepository } from '@/modules/admin/infrastructure/admin.repository';
+import { AdminController } from '@/modules/admin/controller';
+import { AdminUseCase } from '@/modules/admin/usecases';
+import { AdminRepository } from '@/modules/admin/repository';
 
 @Module({
   controllers: [AdminController],

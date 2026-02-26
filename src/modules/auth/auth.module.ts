@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { AuthController } from '@/modules/auth/presentation/auth.controller';
-import { AuthUseCase } from '@/modules/auth/application/auth.usecase';
-import { AuthRepository } from '@/modules/auth/infrastructure/auth.repository';
+import { AuthController } from '@/modules/auth/controller';
+import { AuthUseCase } from '@/modules/auth/usecases';
+import { AuthRepository } from '@/modules/auth/repository';
 
 @Module({
   controllers: [AuthController],
